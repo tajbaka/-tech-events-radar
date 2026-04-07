@@ -10,6 +10,9 @@ export function VoiceGreeting() {
     const today = new Date().toISOString().slice(0, 10);
     if (localStorage.getItem(STORAGE_KEY) === today) return;
 
+    const hour = new Date().getHours();
+    if (hour < 5 || hour >= 12) return;
+
     const audio = new Audio("/api/greeting");
     audioRef.current = audio;
     audio
