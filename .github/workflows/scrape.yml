@@ -1,0 +1,24 @@
+name: Daily Scrape
+
+on:
+  schedule:
+    - cron: '0 11 * * *' # 6am EST / 11:00 UTC
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx tsx scripts/scrape.ts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          EVENTBRITE_TOKEN: ${{ secrets.EVENTBRITE_TOKEN }}
