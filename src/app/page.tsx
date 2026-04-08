@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { CityToggle } from "./components/CityToggle";
 import { CategoryFilter } from "./components/CategoryFilter";
 import { SourceFilter } from "./components/SourceFilter";
@@ -8,20 +9,76 @@ import { DateFilter, getDateRange, type DatePreset } from "./components/DateFilt
 import { EventCard } from "./components/EventCard";
 import { EventModal } from "./components/EventModal";
 import { VoiceGreeting } from "./components/VoiceGreeting";
-import type { City, Category, Source } from "../../config";
+import { CITIES, SOURCES, CATEGORIES, type City, type Category, type Source } from "../../config";
 import type { Event } from "../../db/schema";
 
-export default function Page() {
-  const [city, setCity] = useState<City>("toronto");
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [sources, setSources] = useState<Source[]>([]);
-  const [datePreset, setDatePreset] = useState<DatePreset>("14");
-  const [customStart, setCustomStart] = useState("");
-  const [customEnd, setCustomEnd] = useState("");
+const DATE_PRESETS: DatePreset[] = ["today", "tomorrow", "7", "14", "30", "custom"];
+
+function useFilterParams() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  const city = (CITIES as readonly string[]).includes(searchParams.get("city") ?? "")
+    ? (searchParams.get("city") as City)
+    : "toronto";
+
+  const categories = (searchParams.get("categories") ?? "")
+    .split(",")
+    .filter((c): c is Category => (CATEGORIES as readonly string[]).includes(c));
+
+  const sources = (searchParams.get("sources") ?? "")
+    .split(",")
+    .filter((s): s is Source => (SOURCES as readonly string[]).includes(s));
+
+  const rawPreset = searchParams.get("date") ?? "14";
+  const datePreset: DatePreset = DATE_PRESETS.includes(rawPreset as DatePreset)
+    ? (rawPreset as DatePreset)
+    : "14";
+
+  const customStart = searchParams.get("start") ?? "";
+  const customEnd = searchParams.get("end") ?? "";
+  const hideVirtual = searchParams.get("hideVirtual") === "1";
+
+  const setParams = useCallback(
+    (updates: Record<string, string | null>) => {
+      const params = new URLSearchParams(searchParams.toString());
+      for (const [key, value] of Object.entries(updates)) {
+        if (value === null || value === "") params.delete(key);
+        else params.set(key, value);
+      }
+      router.replace(`?${params.toString()}`, { scroll: false });
+    },
+    [searchParams, router],
+  );
+
+  return { city, categories, sources, datePreset, customStart, customEnd, hideVirtual, setParams };
+}
+
+function PageContent() {
+  const { city, categories, sources, datePreset, customStart, customEnd, hideVirtual, setParams } =
+    useFilterParams();
+
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Event | null>(null);
-  const [hideVirtual, setHideVirtual] = useState(false);
+
+  const setCity = (c: City) => setParams({ city: c === "toronto" ? null : c });
+  const toggleCategory = (c: Category) => {
+    const next = categories.includes(c) ? categories.filter((x) => x !== c) : [...categories, c];
+    setParams({ categories: next.length > 0 ? next.join(",") : null });
+  };
+  const toggleSource = (s: Source) => {
+    const next = sources.includes(s) ? sources.filter((x) => x !== s) : [...sources, s];
+    setParams({ sources: next.length > 0 ? next.join(",") : null });
+  };
+  const handleDateChange = (p: DatePreset, s?: string, e?: string) => {
+    setParams({
+      date: p === "14" ? null : p,
+      start: p === "custom" ? (s ?? customStart) || null : null,
+      end: p === "custom" ? (e ?? customEnd) || null : null,
+    });
+  };
+  const setHideVirtual = (v: boolean) => setParams({ hideVirtual: v ? "1" : null });
 
   const { start, end } = useMemo(
     () => getDateRange(datePreset, customStart, customEnd),
@@ -61,16 +118,6 @@ export default function Page() {
     return Array.from(byDate.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [filtered]);
 
-  const toggleCategory = (c: Category) =>
-    setCategories((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
-  const toggleSource = (s: Source) =>
-    setSources((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
-  const handleDateChange = (p: DatePreset, s?: string, e?: string) => {
-    setDatePreset(p);
-    if (s !== undefined) setCustomStart(s);
-    if (e !== undefined) setCustomEnd(e);
-  };
-
   return (
     <main className="mx-auto max-w-4xl px-4 py-8">
       <VoiceGreeting />
@@ -94,13 +141,13 @@ export default function Page() {
         />
       </div>
       <div className="mb-3">
-        <SourceFilter active={sources} onToggle={toggleSource} onClear={() => setSources([])} />
+        <SourceFilter active={sources} onToggle={toggleSource} onClear={() => setParams({ sources: null })} />
       </div>
       <div className="mb-3">
         <CategoryFilter
           active={categories}
           onToggle={toggleCategory}
-          onClear={() => setCategories([])}
+          onClear={() => setParams({ categories: null })}
         />
       </div>
       <div className="mb-6 flex items-center gap-2">
@@ -108,7 +155,7 @@ export default function Page() {
           <input
             type="checkbox"
             checked={hideVirtual}
-            onChange={(e) => setHideVirtual(e.target.checked)}
+            onChange={(e) => setHideVirtual(e.target.checked as boolean)}
             className="h-3.5 w-3.5 rounded border-neutral-700 bg-neutral-900 accent-neutral-100"
           />
           Hide virtual events
@@ -149,5 +196,13 @@ export default function Page() {
 
       {selected && <EventModal event={selected} onClose={() => setSelected(null)} />}
     </main>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<div className="py-12 text-center text-sm text-neutral-500">Loading…</div>}>
+      <PageContent />
+    </Suspense>
   );
 }
