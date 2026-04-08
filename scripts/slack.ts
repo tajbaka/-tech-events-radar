@@ -61,10 +61,12 @@ async function postWebhook(text: string): Promise<void> {
 }
 
 export async function sendDigest(events: CategorizedEvent[]): Promise<void> {
-  for (const city of CITIES) {
-    const digest = buildCityDigest(city, events);
-    if (digest) await postWebhook(digest);
-  }
+  const total = events.length;
+  const byCityCount = CITIES.map((city) => {
+    const count = events.filter((e) => e.city === city).length;
+    return `${CITY_LABELS[city]}: ${count}`;
+  }).join(", ");
+  await postWebhook(`Pulled ${total} events (${byCityCount})`);
 }
 
 export async function sendHealthAlert(flagged: HealthResult[]): Promise<void> {

@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 // Proxy ElevenLabs TTS so the API key stays server-side.
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const text = searchParams.get("text") ?? "Good morning, here are your events for today.";
+  const text = searchParams.get("text") ?? "Good morning... here are your events for today.";
 
   const apiKey = process.env.ELEVENLABS_API_KEY;
   const voiceId = process.env.ELEVENLABS_VOICE_ID;
