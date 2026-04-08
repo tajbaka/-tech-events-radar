@@ -22,13 +22,17 @@ function useFilterParams() {
     ? (searchParams.get("city") as City)
     : "toronto";
 
-  const categories = (searchParams.get("categories") ?? "")
-    .split(",")
-    .filter((c): c is Category => (CATEGORIES as readonly string[]).includes(c));
+  const categoriesParam = searchParams.get("categories") ?? "";
+  const categories = useMemo(
+    () => categoriesParam.split(",").filter((c): c is Category => (CATEGORIES as readonly string[]).includes(c)),
+    [categoriesParam],
+  );
 
-  const sources = (searchParams.get("sources") ?? "")
-    .split(",")
-    .filter((s): s is Source => (SOURCES as readonly string[]).includes(s));
+  const sourcesParam = searchParams.get("sources") ?? "";
+  const sources = useMemo(
+    () => sourcesParam.split(",").filter((s): s is Source => (SOURCES as readonly string[]).includes(s)),
+    [sourcesParam],
+  );
 
   const rawPreset = searchParams.get("date") ?? "14";
   const datePreset: DatePreset = DATE_PRESETS.includes(rawPreset as DatePreset)
