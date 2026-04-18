@@ -39,8 +39,9 @@ export async function scrapeEventbrite(city: City, browser?: Browser): Promise<N
   const byUrl = new Map<string, NormalizedEvent>();
   try {
     for (const q of TECH_SEARCH_QUERIES) {
-      for (let pageNum = 1; pageNum <= 2; pageNum++) {
+      for (let pageNum = 1; pageNum <= 8; pageNum++) {
         const page = await ctx.newPage();
+        let stopQuery = false;
         try {
           await page.goto(SEARCH_URL(meta.eventbriteLocation, q, pageNum), {
             waitUntil: "domcontentloaded",
@@ -49,7 +50,13 @@ export async function scrapeEventbrite(city: City, browser?: Browser): Promise<N
           // JSON-LD scripts carry the structured event data.
           const scripts = await page.locator('script[type="application/ld+json"]').allTextContents();
           const events = parseJsonLdEvents(scripts);
-          if (events.length === 0) break;
+          if (events.length === 0) {
+            stopQuery = true;
+          } else if (events.every((ev) => !ev.startDate || !withinWindow(ev.startDate))) {
+            // Listings are date-sorted ascending; once every event on a page is past the
+            // window, deeper pages will also be out-of-window.
+            stopQuery = true;
+          }
           for (const ev of events) {
             if (!ev.url || !ev.name || !ev.startDate) continue;
             if (!withinWindow(ev.startDate)) continue;
@@ -84,6 +91,7 @@ export async function scrapeEventbrite(city: City, browser?: Browser): Promise<N
         } finally {
           await page.close();
         }
+        if (stopQuery) break;
       }
     }
   } finally {

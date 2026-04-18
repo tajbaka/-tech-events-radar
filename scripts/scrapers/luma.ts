@@ -29,7 +29,30 @@ export async function scrapeLuma(city: City, browser?: Browser): Promise<Normali
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129 Safari/537.36",
   });
 
-  const events: NormalizedEvent[] = [];
+  // Collect raw Luma events from both __NEXT_DATA__ and any paginated API responses
+  // that fire as we scroll. De-dupe by api_id here; normalize at the end.
+  const seen = new Set<string>();
+  const raw: LumaApiEvent[] = [];
+  const ingest = (items: LumaApiEvent[]) => {
+    for (const ev of items) {
+      if (!ev.api_id || seen.has(ev.api_id)) continue;
+      seen.add(ev.api_id);
+      raw.push(ev);
+    }
+  };
+
+  page.on("response", async (response) => {
+    const url = response.url();
+    // Luma's city pages paginate via api.lu.ma/discover/... and api.lu.ma/home/...
+    if (!/api\.lu\.ma\/(discover|home|calendar)/.test(url)) return;
+    try {
+      const json = await response.json();
+      ingest(extractLumaEvents(json));
+    } catch {
+      // non-JSON or closed response — ignore
+    }
+  });
+
   try {
     await page.goto(DISCOVER_URL(meta.lumaSlug), { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.waitForSelector("script#__NEXT_DATA__", { timeout: 10_000 }).catch(() => null);
@@ -40,26 +63,25 @@ export async function scrapeLuma(city: City, browser?: Browser): Promise<Normali
       .catch(() => null);
 
     if (nextData) {
-      const parsed = JSON.parse(nextData);
-      const items = extractLumaEvents(parsed);
-      for (const ev of items) {
-        if (!ev.api_id || !ev.name || !ev.start_at) continue;
-        if (!withinWindow(ev.start_at)) continue;
-        const d = new Date(ev.start_at);
-        const endD = ev.end_at ? new Date(ev.end_at) : null;
-        events.push({
-          title: ev.name,
-          description: ev.description ?? "",
-          date: d.toISOString().slice(0, 10),
-          time: d.toISOString().slice(11, 19),
-          endTime: endD ? endD.toISOString().slice(11, 19) : null,
-          city,
-          venue: ev.geo_address_info?.full_address ?? ev.geo_address_info?.address ?? null,
-          url: ev.url ?? `https://lu.ma/${ev.api_id}`,
-          source: "luma",
-          organizer: ev.hosts?.[0]?.name ?? null,
-          imageUrl: ev.cover_url ?? null,
-        });
+      try {
+        ingest(extractLumaEvents(JSON.parse(nextData)));
+      } catch {
+        // malformed __NEXT_DATA__ — continue with API-response capture
+      }
+    }
+
+    // Scroll to trigger lazy-loaded pagination. Stop when the event count stops growing.
+    let lastCount = raw.length;
+    let stagnant = 0;
+    for (let i = 0; i < 20; i++) {
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await page.waitForTimeout(1500);
+      if (raw.length === lastCount) {
+        stagnant += 1;
+        if (stagnant >= 2) break; // two consecutive scrolls with no new events ⇒ done
+      } else {
+        stagnant = 0;
+        lastCount = raw.length;
       }
     }
   } catch (err) {
@@ -67,6 +89,27 @@ export async function scrapeLuma(city: City, browser?: Browser): Promise<Normali
   } finally {
     await page.close();
     if (owns) await b.close();
+  }
+
+  const events: NormalizedEvent[] = [];
+  for (const ev of raw) {
+    if (!ev.name || !ev.start_at) continue;
+    if (!withinWindow(ev.start_at)) continue;
+    const d = new Date(ev.start_at);
+    const endD = ev.end_at ? new Date(ev.end_at) : null;
+    events.push({
+      title: ev.name,
+      description: ev.description ?? "",
+      date: d.toISOString().slice(0, 10),
+      time: d.toISOString().slice(11, 19),
+      endTime: endD ? endD.toISOString().slice(11, 19) : null,
+      city,
+      venue: ev.geo_address_info?.full_address ?? ev.geo_address_info?.address ?? null,
+      url: ev.url ?? `https://lu.ma/${ev.api_id}`,
+      source: "luma",
+      organizer: ev.hosts?.[0]?.name ?? null,
+      imageUrl: ev.cover_url ?? null,
+    });
   }
   return events;
 }
